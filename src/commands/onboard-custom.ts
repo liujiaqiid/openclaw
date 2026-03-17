@@ -353,10 +353,18 @@ async function requestOpenAiVerification(params: {
         stream: false,
       },
     });
-    if (resultWithMaxCompletionTokens.ok || resultWithMaxCompletionTokens.status === 401) {
+    // Only fall back to max_tokens for 4xx client errors (unsupported parameter).
+    // 5xx server errors and network errors should propagate as-is to avoid masking
+    // real failures with false-positive verifications.
+    if (
+      resultWithMaxCompletionTokens.ok ||
+      resultWithMaxCompletionTokens.status === 401 ||
+      (typeof resultWithMaxCompletionTokens.status === "number" &&
+        resultWithMaxCompletionTokens.status >= 500)
+    ) {
       return resultWithMaxCompletionTokens;
     }
-    // Fall back to max_tokens for older OpenAI-compatible providers
+    // Fall back to max_tokens for older OpenAI-compatible providers (4xx errors)
     return await requestVerification({
       endpoint,
       headers,
