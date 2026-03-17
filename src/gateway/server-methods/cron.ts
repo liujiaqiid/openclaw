@@ -27,15 +27,22 @@ import type { GatewayClient, GatewayRequestHandlers } from "./types.js";
  *
  * ownerOverride is true when the client holds the operator.admin scope, meaning
  * it can read and mutate any cron job regardless of ownership metadata.
+ *
+ * Session identity is derived from the authenticated client context (instanceId),
+ * NOT from request parameters. This prevents clients from bypassing ownership
+ * filters by specifying arbitrary sessionKey values.
  */
 function resolveCronCallerOptions(
   client: GatewayClient | null,
-  callerSessionKey?: string,
 ): { callerSessionKey?: string; ownerOverride: boolean } {
   const scopes: readonly string[] = Array.isArray(client?.connect?.scopes)
     ? (client.connect.scopes as string[])
     : [];
   const ownerOverride = scopes.includes(ADMIN_SCOPE);
+  // Derive session identity from the authenticated client context, not from
+  // request params. instanceId serves as the session identifier for ownership
+  // filtering. Do not accept sessionKey from untrusted request parameters.
+  const callerSessionKey = client?.connect?.instanceId;
   return {
     callerSessionKey: callerSessionKey ?? undefined,
     ownerOverride,
@@ -281,14 +288,26 @@ export const cronHandlers: GatewayRequestHandlers = {
       return;
     }
     if (scope === "all") {
-      const callerOpts = resolveCronCallerOptions(client, p.sessionKey);
-      const jobsPage = await context.cron.listPage({
-        includeDisabled: true,
-        callerSessionKey: callerOpts.callerSessionKey,
-        ownerOverride: callerOpts.ownerOverride,
-      });
+      const callerOpts = resolveCronCallerOptions(client);
+      // Build jobNameById from ALL jobs, not just the first page.
+      // listPage() caps results at 200 rows, so we need to paginate.
+      const allJobs: Array<{ id?: string; name?: string }> = [];
+      let offset = 0;
+      let hasMore = true;
+      while (hasMore) {
+        const jobsPage = await context.cron.listPage({
+          includeDisabled: true,
+          callerSessionKey: callerOpts.callerSessionKey,
+          ownerOverride: callerOpts.ownerOverride,
+          offset,
+          limit: 200,
+        });
+        allJobs.push(...jobsPage.jobs);
+        offset += jobsPage.limit;
+        hasMore = jobsPage.hasMore ?? false;
+      }
       const jobNameById = Object.fromEntries(
-        jobsPage.jobs
+        allJobs
           .filter((job) => typeof job.id === "string" && typeof job.name === "string")
           .map((job) => [job.id, job.name]),
       );
