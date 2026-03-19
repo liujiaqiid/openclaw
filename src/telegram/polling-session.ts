@@ -17,21 +17,29 @@ const POLL_STALL_THRESHOLD_MS = 90_000;
 const POLL_WATCHDOG_INTERVAL_MS = 30_000;
 const POLL_STOP_GRACE_MS = 15_000;
 
-const waitForGracefulStop = async (stop: () => Promise<void>) => {
+const waitForGracefulStop = async (stop: () => Promise<void>, log?: (msg: string) => void) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     await Promise.race([
       stop(),
       new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, POLL_STOP_GRACE_MS);
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, POLL_STOP_GRACE_MS);
         timer.unref?.();
       }),
     ]);
+    if (timedOut && log) {
+      log(`[telegram] Graceful stop timed out after ${POLL_STOP_GRACE_MS}ms; stop() promise did not resolve`);
+    }
   } finally {
     if (timer) {
       clearTimeout(timer);
     }
   }
+  return timedOut;
 };
 
 type TelegramBot = ReturnType<typeof createTelegramBot>;
@@ -268,8 +276,13 @@ export class TelegramPollingSession {
     } finally {
       clearInterval(watchdog);
       this.opts.abortSignal?.removeEventListener("abort", stopOnAbort);
-      await waitForGracefulStop(stopRunner);
-      await waitForGracefulStop(stopBot);
+      // Wait for graceful stop with timeout for diagnostics, but ensure we wait for actual completion
+      const runnerTimedOut = await waitForGracefulStop(stopRunner, this.opts.log);
+      if (runnerTimedOut) {
+        // Continue waiting for the runner to actually stop to avoid race conditions
+        await stopRunner();
+      }
+      await waitForGracefulStop(stopBot, this.opts.log);
       this.#activeRunner = undefined;
       if (this.#activeFetchAbort === fetchAbortController) {
         this.#activeFetchAbort = undefined;
