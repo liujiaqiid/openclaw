@@ -4,6 +4,7 @@ import path from "node:path";
 export type QueuedFileWriter = {
   filePath: string;
   write: (line: string) => void;
+  drain: () => Promise<void>;
 };
 
 /** Number of consecutive failures before emitting a warning. */
@@ -34,7 +35,7 @@ export function getQueuedFileWriter(
         })
         .catch((err: unknown) => {
           consecutiveFailures++;
-          if (consecutiveFailures === WARN_AFTER_FAILURES) {
+          if (consecutiveFailures >= WARN_AFTER_FAILURES) {
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(
               `QueuedFileWriter: ${consecutiveFailures} consecutive write failures to ${filePath}: ${msg}`,
@@ -42,6 +43,7 @@ export function getQueuedFileWriter(
           }
         });
     },
+    drain: () => queue,
   };
 
   writers.set(filePath, writer);

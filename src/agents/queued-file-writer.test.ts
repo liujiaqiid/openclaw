@@ -20,7 +20,7 @@ describe("QueuedFileWriter", () => {
     writer.write("line2\n");
 
     // Wait for the queue to drain
-    await new Promise((r) => setTimeout(r, 200));
+    await writer.drain();
 
     const content = await fs.readFile(filePath, "utf8");
     expect(content).toBe("line1\nline2\n");
@@ -55,7 +55,7 @@ describe("QueuedFileWriter", () => {
     writer.write("c\n");
 
     // Wait for queue to drain
-    await new Promise((r) => setTimeout(r, 500));
+    await writer.drain();
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]?.[0]).toContain("QueuedFileWriter");
@@ -74,15 +74,44 @@ describe("QueuedFileWriter", () => {
 
     const writer = getQueuedFileWriter(writers, filePath);
 
-    // Successful writes should not trigger warning
-    writer.write("ok1\n");
-    writer.write("ok2\n");
-    writer.write("ok3\n");
-    writer.write("ok4\n");
+    // Induce 2 failures (not enough to trigger warning)
+    // Make the file unwritable by replacing it with a directory
+    await fs.rm(filePath, { force: true });
+    await fs.mkdir(filePath, { recursive: true });
 
-    await new Promise((r) => setTimeout(r, 200));
+    writer.write("fail1\n");
+    writer.write("fail2\n");
+    await writer.drain();
 
+    // No warning yet (only 2 failures)
     expect(warnSpy).not.toHaveBeenCalled();
+
+    // Now make it writable again (remove directory, create file)
+    await fs.rm(filePath, { force: true });
+
+    // Successful write - resets failure count
+    writer.write("ok1\n");
+    await writer.drain();
+
+    // Make it unwritable again
+    await fs.rm(filePath, { force: true });
+    await fs.mkdir(filePath, { recursive: true });
+
+    // Induce 2 more failures - should NOT trigger warning because count was reset
+    writer.write("fail3\n");
+    writer.write("fail4\n");
+    await writer.drain();
+
+    // Still no warning (only 2 failures after reset)
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // One more failure to reach threshold
+    writer.write("fail5\n");
+    await writer.drain();
+
+    // Now warning should fire (3 failures after reset)
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("3 consecutive write failures");
 
     warnSpy.mockRestore();
     await fs.rm(dir, { recursive: true, force: true });
