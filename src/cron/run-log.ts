@@ -353,7 +353,7 @@ function filterRunLogEntries(
 
 export async function readCronRunLogEntriesPage(
   filePath: string,
-  opts?: ReadCronRunLogPageOptions,
+  opts?: ReadCronRunLogPageOptions & { pruneOptions?: { maxBytes: number; keepLines: number } },
 ): Promise<CronRunLogPageResult> {
   await drainPendingWrite(filePath);
   const limit = Math.max(1, Math.min(200, Math.floor(opts?.limit ?? 50)));
@@ -361,10 +361,13 @@ export async function readCronRunLogEntriesPage(
   // Defensive prune before reading: if async prune in appendCronRunLog failed
   // silently (e.g. disk pressure), the file may have grown beyond the expected
   // max size. Pruning here prevents OOM when loading the file into memory.
-  await pruneIfNeeded(resolved, {
+  // Uses runtime-configured prune options when provided to avoid truncating
+  // logs that are within configured limits.
+  const pruneOpts = opts?.pruneOptions ?? {
     maxBytes: DEFAULT_CRON_RUN_LOG_MAX_BYTES,
     keepLines: DEFAULT_CRON_RUN_LOG_KEEP_LINES,
-  });
+  };
+  await pruneIfNeeded(resolved, pruneOpts).catch(() => undefined);
   const raw = await fs.readFile(resolved, "utf-8").catch(() => "");
   const statuses = normalizeRunStatuses(opts);
   const deliveryStatuses = normalizeDeliveryStatuses(opts);
@@ -396,7 +399,7 @@ export async function readCronRunLogEntriesPage(
 }
 
 export async function readCronRunLogEntriesPageAll(
-  opts: ReadCronRunLogAllPageOptions,
+  opts: ReadCronRunLogAllPageOptions & { pruneOptions?: { maxBytes: number; keepLines: number } },
 ): Promise<CronRunLogPageResult> {
   const limit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 50)));
   const statuses = normalizeRunStatuses(opts);
@@ -419,14 +422,15 @@ export async function readCronRunLogEntriesPageAll(
     };
   }
   await Promise.all(jsonlFiles.map((f) => drainPendingWrite(f)));
-  // Defensive prune on each file before reading to prevent OOM from unbounded growth
+  // Defensive prune on each file before reading to prevent OOM from unbounded growth.
+  // Uses runtime-configured prune options when provided to avoid truncating logs
+  // that are within configured limits.
+  const pruneOpts = opts.pruneOptions ?? {
+    maxBytes: DEFAULT_CRON_RUN_LOG_MAX_BYTES,
+    keepLines: DEFAULT_CRON_RUN_LOG_KEEP_LINES,
+  };
   await Promise.all(
-    jsonlFiles.map((f) =>
-      pruneIfNeeded(f, {
-        maxBytes: DEFAULT_CRON_RUN_LOG_MAX_BYTES,
-        keepLines: DEFAULT_CRON_RUN_LOG_KEEP_LINES,
-      }),
-    ),
+    jsonlFiles.map((f) => pruneIfNeeded(f, pruneOpts).catch(() => undefined)),
   );
   const chunks = await Promise.all(
     jsonlFiles.map(async (filePath) => {

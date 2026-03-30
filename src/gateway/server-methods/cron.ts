@@ -265,6 +265,7 @@ export const cronHandlers: GatewayRequestHandlers = {
           .filter((job) => typeof job.id === "string" && typeof job.name === "string")
           .map((job) => [job.id, job.name]),
       );
+      const pruneOptions = context.cron.getCronRunLogPruneOptions();
       const page = await readCronRunLogEntriesPageAll({
         storePath: context.cronStorePath,
         limit: p.limit,
@@ -276,6 +277,7 @@ export const cronHandlers: GatewayRequestHandlers = {
         query: p.query,
         sortDir: p.sortDir,
         jobNameById,
+        pruneOptions,
       });
       respond(true, page, undefined);
       return;
@@ -294,6 +296,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    const pruneOptions = context.cron.getCronRunLogPruneOptions();
     const page = await readCronRunLogEntriesPage(logPath, {
       limit: p.limit,
       offset: p.offset,
@@ -304,6 +307,7 @@ export const cronHandlers: GatewayRequestHandlers = {
       deliveryStatus: p.deliveryStatus,
       query: p.query,
       sortDir: p.sortDir,
+      pruneOptions,
     });
     respond(true, page, undefined);
   },

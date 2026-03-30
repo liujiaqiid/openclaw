@@ -1,6 +1,7 @@
 import * as ops from "./service/ops.js";
 import { type CronServiceDeps, createCronServiceState } from "./service/state.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "./types.js";
+import { resolveCronRunLogPruneOptions } from "./run-log.js";
 
 export type { CronEvent, CronServiceDeps } from "./service/state.js";
 
@@ -56,5 +57,9 @@ export class CronService {
 
   wake(opts: { mode: "now" | "next-heartbeat"; text: string }) {
     return ops.wakeNow(this.state, opts);
+  }
+
+  getCronRunLogPruneOptions(): { maxBytes: number; keepLines: number } {
+    return resolveCronRunLogPruneOptions(this.state.deps.cronConfig?.runLog);
   }
 }
